@@ -112,6 +112,7 @@ class PiiScrubber:
         self.regex_patterns = [
             ("US_SSN", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "XXX-XX-XXXX"),
             ("CREDIT_CARD", re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "XXXX-XXXX-XXXX-XXXX"),
+            ("PHONE_NUMBER", re.compile(r"\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b"), "REDACTED-PHONE"),
             ("PRIVATE_IP", re.compile(r"\b(?:10|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}\b"), "PRIVATE-IP"),
             ("EMAIL", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "REDACTED-EMAIL"),
         ]
@@ -136,6 +137,10 @@ class PiiScrubber:
                 scrubbed = pattern.sub(replacement, scrubbed)
                 
         return scrubbed, findings
+
+    def sanitize_output(self, text: str) -> Tuple[str, List[Dict[str, Any]]]:
+        # Output sanitization uses the same deterministic and Presidio-backed logic as input scrubbing.
+        return self.scrub(text)
 
 
 class BudgetStore:
@@ -266,6 +271,8 @@ class LlmRouter:
         prompt = request.prompt.lower()
         if request.metadata.simulate_missing_source:
             return "This response was generated without explicit source tags and must be recovered by the verifier."
+        if "echo pii" in prompt or "leak pii" in prompt:
+            return f"The answer must not expose sensitive data like 123-45-6789 or 4111 1111 1111 1111. Routed through {provider}. <source>SEC-AI-OPS-4</source>"
         if "refund" in prompt:
             return f"Sensitive data was removed before processing. Refund eligibility depends on return window, condition, and purchase channel. Routed through {provider}. <source>POLICY-REFUND-2026</source>"
         if "onboarding" in prompt:
@@ -404,6 +411,8 @@ class GovernanceProxy:
         judge_result = self.judge(raw, request) if policy["judge"] else None
         decision = "flag_for_human_review" if judge_result and not judge_result["passed"] else "allow"
         final_answer = self.redact_sources(raw)
+        final_answer, output_findings = self.scrubber.sanitize_output(final_answer)
+        raw_model_answer, raw_model_output_findings = self.scrubber.sanitize_output(raw)
 
         session.request_count += 1
         session.token_count += requested_tokens
@@ -417,6 +426,8 @@ class GovernanceProxy:
                 "source_verification": source_verification,
                 "fallback_used": fallback_used,
                 "judge": judge_result,
+                "output_sanitization": output_findings,
+                "raw_model_output_sanitization": raw_model_output_findings,
             },
             "provider_events": provider_events,
         }
@@ -437,7 +448,7 @@ class GovernanceProxy:
             "accepted": True,
             "decision": decision,
             "final_answer": final_answer,
-            "raw_model_answer": raw,
+            "raw_model_answer": raw_model_answer,
             "scrubbed_prompt": scrubbed_prompt,
             "cache": {"hit": False},
             "layers": trace,

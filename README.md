@@ -28,7 +28,7 @@ Then use these demo actions on the page:
 5. Click `Simulate Agent Action`.
 6. Select `Fail-Closed Schema Drop` and click `Run Proxy`.
 
-## 2. How To Explain The Output
+## The Output
 
 When the checker runs the demo, the UI shows four kinds of output.
 
@@ -322,8 +322,6 @@ Returns the demo scenarios shown in the left panel.
 - Persist audit logs to SIEM, data lake, or governance dashboard.
 
 ## 11. A Simple Mental Model
-
-If you are explaining the project in one sentence, say this:
 
 The browser sends a request, the proxy checks and routes it, the model answers, the verifier checks the answer, and the user only sees the sanitized result plus a full audit trail.
 

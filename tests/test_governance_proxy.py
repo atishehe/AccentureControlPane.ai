@@ -61,6 +61,20 @@ class GovernanceProxyTests(unittest.TestCase):
         self.assertTrue(result["layers"]["verify"]["fallback_used"])
         self.assertEqual(result["layers"]["verify"]["sources"], ["POLICY-CREDIT-EU-7"])
 
+    def test_final_output_is_sanitized(self):
+        payload = {
+            **self.payload,
+            "request_id": "output-sanitize",
+            "prompt": "Please echo pii back to me.",
+        }
+        result = asyncio.run(self.proxy.process_buffered(ProxyRequest(**payload)))
+        self.assertTrue(result["accepted"])
+        self.assertNotIn("123-45-6789", result["final_answer"])
+        self.assertNotIn("4111 1111 1111 1111", result["final_answer"])
+        self.assertNotIn("123-45-6789", result["raw_model_answer"])
+        self.assertNotIn("4111 1111 1111 1111", result["raw_model_answer"])
+        self.assertTrue(result["layers"]["verify"]["output_sanitization"])
+
     def test_agent_circuit_breaker(self):
         action = {
             "user_id": "user-test",
