@@ -1,0 +1,17 @@
+{
+  "name": "controlplane-ai-prototype",
+  "version": "1.0.0",
+  "description": "Track 1 prototype: AI Governance Middleware Proxy with Prevent, Gate, Verify, and Control layers.",
+  "scripts": {
+    "start": ".venv/Scripts/python.exe run.py",
+    "test": ".venv/Scripts/python.exe -m unittest tests/test_governance_proxy.py"
+  },
+  "keywords": [
+    "responsible-ai",
+    "middleware",
+    "governance",
+    "prototype"
+  ],
+  "author": "",
+  "license": "MIT"
+}

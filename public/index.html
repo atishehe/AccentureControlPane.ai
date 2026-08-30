@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ControlPlane.ai Prototype</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <p class="eyebrow">Track 1 Enterprise Proxy</p>
+          <h1>ControlPlane.ai</h1>
+        </div>
+        <div class="status-pill" id="health">FastAPI governance proxy</div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel scenario-panel">
+          <h2>Scenario</h2>
+          <div id="scenarioList" class="scenario-list"></div>
+          <button id="runButton" class="primary-button">Run Proxy</button>
+          <button id="streamButton" class="secondary-button">Stream SSE</button>
+          <button id="actionButton" class="secondary-button">Simulate Agent Action</button>
+        </aside>
+
+        <section class="panel request-panel">
+          <div class="panel-header">
+            <h2>Incoming JSON</h2>
+            <span id="scenarioDescription"></span>
+          </div>
+          <textarea id="payloadEditor" spellcheck="false"></textarea>
+        </section>
+
+        <section class="panel result-panel">
+          <div class="panel-header">
+            <h2>Decision Trace</h2>
+            <span id="decisionBadge">Waiting</span>
+          </div>
+          <div class="pipeline" id="pipeline"></div>
+          <div class="stream-output" id="streamOutput">Streaming output will appear here.</div>
+          <pre id="resultBox">{}</pre>
+        </section>
+      </section>
+
+      <section class="dashboard">
+        <div class="metric">
+          <span>Total Events</span>
+          <strong id="totalEvents">0</strong>
+        </div>
+        <div class="metric">
+          <span>Blocked / Flagged</span>
+          <strong id="blockedEvents">0</strong>
+        </div>
+        <div class="metric">
+          <span>Fallback Verifications</span>
+          <strong id="fallbackEvents">0</strong>
+        </div>
+        <div class="metric">
+          <span>Semantic Cache</span>
+          <strong id="cacheEntries">0</strong>
+        </div>
+        <div class="audit panel">
+          <h2>Audit Trail</h2>
+          <div id="auditLog"></div>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
