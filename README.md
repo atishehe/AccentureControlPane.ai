@@ -4,7 +4,7 @@ ControlPlane.ai is an AI Governance Middleware Proxy for Track 1. It sits betwee
 
 The model should not be the only thing making decisions. The proxy checks the request before it reaches the model, watches the model while it streams, verifies the answer before it is shown, and logs enough context for a governance team to explain what happened.
 
-## 1. Demo First: What Checkers Should Do
+## 1. Demo First: How to run
 
 Run the app:
 
