@@ -62,7 +62,7 @@ An executive-level operational breakdown explaining the output in plain, structu
 - `Data Privacy & DLP`: Reports specific PII entities intercepted and redacted.
 - `Routing & Resiliency`: Documents route selection, cache hits, or mid-stream 429 provider failover.
 - `Source Grounding`: Verifies document IDs cited against the enterprise registry.
-- `Risk & Safety Profile`: Displays numeric tri-risk scores (`overall_risk`, `performance_risk`, `cost_risk`, `responsibility_risk`) and secondary AI Judge critique.
+- `Risk & Safety Profile`: Displays numeric tri-risk scores (`overall_risk`, `performance_risk`, `cost_risk`, `responsibility_risk`), the lightweight domain classification, the selected Judge focus, and secondary AI Judge critique.
 
 ### Audit Log & Lifecycle Explainer
 
@@ -146,13 +146,16 @@ Expected output:
 
 ### `Bias Risk Detector`
 
-This shows responsibility-risk detection.
+This shows responsibility-risk detection for bias, fairness, and inclusiveness.
 
 Expected output:
 
+- the lightweight domain classifier tags the request or model output as `ethical` or `social`
 - protected-attribute language is detected
-- `responsibility_risk` increases
+- `responsibility_risk` receives a higher baseline and the risk signals include `ethical_domain_baseline` or `social_domain_baseline`
 - the judge branch is invoked because risk and budget justify it
+- `judge_invocation.judge_focus` becomes `inclusiveness_and_fairness`
+- the Judge result includes fairness checks for protected attributes and equal treatment
 - the final decision becomes `block`
 
 ### `The Perfect Storm (Multi-Risk)`
@@ -207,6 +210,7 @@ ControlPlane.ai sits between client applications and foundation model runtimes a
          │ 4. VERIFY & SANITIZE LAYER (Post-Generation Audit)                       │
          │  • Registry Grounding Audit (Matches <source> tags vs known documents)   │
          │  • Asynchronous Grounding Fallback Search (Recovers missing evidence)   │
+         │  • Lightweight Domain Classification (Ethical, Social, Technical, General)│
          │  • Tri-Factor Risk Scoring (Performance, Cost, Responsibility / Bias)    │
          │  • Adaptive AI-as-a-Judge Escalation (Invoked only when risk justifies)  │
          │  • Final Outbound Sanitization (Strips internal tags & masks leaks)      │
@@ -237,6 +241,7 @@ ControlPlane.ai sits between client applications and foundation model runtimes a
 4. **Verify & Sanitize (Grounding & Safety Audit):**
    * Verifies hidden `<source>...</source>` citations against an authoritative document store (`SOURCE_REGISTRY`).
    * Triggers an asynchronous fallback search if the model hallucinates or omits citations.
+   * Classifies the request and raw model output into lightweight domains (`ethical`, `social`, `technical`, or `general`) before final policy selection.
    * Calculates a composite tri-risk score across Performance, Cost, and Responsibility.
    * Strips all internal source tags and leaked tokens before returning the final response to the user.
 
@@ -248,6 +253,12 @@ The proxy computes a normalized tri-factor composite risk score:
 * **`cost_risk`**: Tracks token budget depletion, upstream provider failover occurrences, and high token utilization.
 * **`responsibility_risk`**: Flags demographic bias, protected personal attributes, and sensitive entity context.
 
+Before those scores are finalized, the proxy runs a fast keyword-based domain classifier over both the sanitized prompt and the raw model output:
+
+* **`ethical` or `social`**: Raises the responsibility baseline and adds `ethical_domain_baseline` or `social_domain_baseline` to the trace. If the use case allows Judge review and budget remains, the Judge focus becomes `inclusiveness_and_fairness`.
+* **`technical`**: Slightly raises cost scrutiny because these requests often imply tool calls, infrastructure work, or token-heavy debugging.
+* **`general`**: Uses the normal baseline and avoids unnecessary Judge calls.
+
 Based on the composite risk matrix, the proxy enforces an explicit policy decision:
 * **`ALLOW`**: Response passed all safety checks and citations; within normal risk tolerances.
 * **`EDIT`**: Response contained sensitive entities or internal source metadata; sanitized before user delivery.
@@ -258,7 +269,8 @@ Based on the composite risk matrix, the proxy enforces an explicit policy decisi
 Calling a secondary LLM-as-a-Judge on every request is economically unviable and adds unacceptable latency. ControlPlane.ai uses an **adaptive escalation pattern**:
 1. Run fast, deterministic heuristic scoring first.
 2. If risk exceeds the use-case threshold AND the session has sufficient token and latency budget, invoke the Judge.
-3. If risk is low or budget is constrained, skip the Judge and resolve via deterministic policy.
+3. If the selected domain is `ethical` or `social`, prompt the Judge specifically for inclusiveness, fairness, protected-attribute treatment, and equal-access concerns.
+4. If risk is low or budget is constrained, skip the Judge and resolve via deterministic policy.
 
 ## 6. Implementation Approach
 
@@ -325,14 +337,14 @@ http://127.0.0.1:8000
 ```
 
 ### Running the Automated Test Suite
-To verify all 9 governance proxy tests (PII scrubbing, semantic caching, 429 failover, citation recovery, circuit breaker, and risk scoring):
+To verify all 10 governance proxy tests (PII scrubbing, semantic caching, 429 failover, citation recovery, circuit breaker, adaptive Judge routing, bias domain classification, and risk scoring):
 
 ```bash
 python -m unittest tests/test_governance_proxy.py
 ```
 Expected output:
 ```text
-Ran 9 tests in ~12s
+Ran 10 tests in ~14s
 OK
 ```
 

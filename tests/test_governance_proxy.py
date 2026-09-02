@@ -91,6 +91,28 @@ class GovernanceProxyTests(unittest.TestCase):
         self.assertEqual(result["layers"]["verify"]["judge_invocation"]["reason"], "risk_and_budget_justify_judge")
         self.assertEqual(result["decision"], "block")
 
+    def test_bias_domain_classification_routes_to_fairness_judge(self):
+        payload = {
+            **self.payload,
+            "request_id": "bias-domain",
+            "prompt": "Rank users by access priority.",
+            "metadata": {
+                **self.payload["metadata"],
+                "simulate_bias_risk": True,
+            },
+        }
+        result = asyncio.run(self.proxy.process_buffered(ProxyRequest(**payload)))
+        selected_domain = result["layers"]["verify"]["domain_classification"]["selected"]
+        self.assertIn(selected_domain["category"], {"ethical", "social"})
+        self.assertTrue(
+            {"ethical_domain_baseline", "social_domain_baseline"}
+            & set(result["layers"]["verify"]["risk_score"]["signals"])
+        )
+        self.assertEqual(result["layers"]["verify"]["judge_invocation"]["judge_focus"], "inclusiveness_and_fairness")
+        self.assertEqual(result["layers"]["verify"]["judge"]["focus"], "inclusiveness_and_fairness")
+        self.assertTrue(result["layers"]["verify"]["judge"]["fairness_checks"])
+        self.assertEqual(result["decision"], "block")
+
     def test_low_risk_skips_judge_when_risk_is_below_threshold(self):
         payload = {
             **self.payload,

@@ -322,6 +322,36 @@ class GovernanceProxy:
             f"User prompt: {prompt}"
         )
 
+    def classify_domain(self, text: str) -> Dict[str, Any]:
+        lower = text.lower()
+        categories = {
+            "ethical": {
+                "fairness", "bias", "inclusive", "inclusiveness", "ethical", "equity",
+                "discrimination", "protected", "demographic", "access priority",
+            },
+            "social": {
+                "gender", "race", "religion", "caste", "disability", "age", "ethnicity",
+                "nationality", "hiring", "loan", "credit", "benefit", "eligibility",
+            },
+            "technical": {
+                "api", "latency", "token", "database", "server", "code", "deployment",
+                "security", "cache", "redis", "model routing",
+            },
+        }
+        scores = {
+            category: sum(1 for keyword in keywords if keyword in lower)
+            for category, keywords in categories.items()
+        }
+        category = max(scores, key=scores.get)
+        if scores[category] == 0:
+            category = "general"
+        confidence = min(0.95, 0.45 + scores.get(category, 0) * 0.18) if category != "general" else 0.4
+        return {
+            "category": category,
+            "confidence": round(confidence, 2),
+            "scores": scores,
+        }
+
     def parse_sources(self, text: str) -> List[str]:
         return [item.strip() for item in re.findall(r"<source>(.*?)</source>", text, flags=re.I | re.S) if item.strip()]
 
@@ -347,7 +377,7 @@ class GovernanceProxy:
             "SEC-AI-OPS-4",
         )
 
-    def judge(self, text: str, request: ProxyRequest) -> Dict[str, Any]:
+    def judge(self, text: str, request: ProxyRequest, focus: Optional[str] = None) -> Dict[str, Any]:
         issues = []
         lower = text.lower()
         if "always approve" in lower or "always reject" in lower:
@@ -356,10 +386,19 @@ class GovernanceProxy:
             issues.append("human_review_required")
         if any(term in lower for term in ["race", "religion", "gender"]):
             issues.append("protected_attribute_risk")
+        fairness_checks = []
+        if focus == "inclusiveness_and_fairness":
+            fairness_checks = [
+                "checks protected attributes are not used as decision criteria",
+                "checks language is inclusive and non-discriminatory",
+                "checks recommendations avoid demographic stereotyping",
+            ]
         return {
+            "focus": focus or "grounding_and_safety",
             "passed": not issues,
             "score": max(0.1, round(1 - 0.25 * len(issues), 2)),
             "issues": issues,
+            "fairness_checks": fairness_checks,
         }
 
     def redact_sources(self, text: str) -> str:
@@ -376,6 +415,7 @@ class GovernanceProxy:
         provider_events: List[Dict[str, str]],
         raw: str,
         fallback_used: bool,
+        domain: Dict[str, Any],
     ) -> Dict[str, Any]:
         lower = raw.lower()
         performance = 0.08
@@ -387,6 +427,13 @@ class GovernanceProxy:
             performance += 0.12
             responsibility += 0.12
             signals.append("high_risk_external_context")
+
+        if domain["category"] in {"ethical", "social"}:
+            responsibility += 0.24
+            signals.append(f"{domain['category']}_domain_baseline")
+        elif domain["category"] == "technical":
+            cost += 0.06
+            signals.append("technical_domain_baseline")
 
         if not source_verification["ok"]:
             performance += 0.55
@@ -429,6 +476,7 @@ class GovernanceProxy:
             "cost_risk": round(cost, 2),
             "responsibility_risk": round(responsibility, 2),
             "overall_risk": overall,
+            "domain": domain,
             "signals": sorted(set(signals)),
         }
 
@@ -441,7 +489,14 @@ class GovernanceProxy:
             return {"invoke": False, "reason": "judge_budget_not_available", "required_tokens": policy["judge_token_budget"]}
         if request.metadata.latency_budget_ms < 350:
             return {"invoke": False, "reason": "latency_budget_too_tight"}
-        return {"invoke": True, "reason": "risk_and_budget_justify_judge", "threshold": policy["judge_min_risk"], "reserved_tokens": policy["judge_token_budget"]}
+        judge_focus = "inclusiveness_and_fairness" if risk_score["domain"]["category"] in {"ethical", "social"} else "grounding_and_safety"
+        return {
+            "invoke": True,
+            "reason": "risk_and_budget_justify_judge",
+            "threshold": policy["judge_min_risk"],
+            "reserved_tokens": policy["judge_token_budget"],
+            "judge_focus": judge_focus,
+        }
 
     def decide_outcome(
         self,
@@ -481,6 +536,7 @@ class GovernanceProxy:
         policy = self.policy_for(request.metadata.use_case_tag)
         scrubbed_prompt, pii_findings = self.scrubber.scrub(request.prompt)
         requested_tokens = self.estimate_tokens(scrubbed_prompt, request.max_tokens)
+        input_domain = self.classify_domain(scrubbed_prompt)
 
         bucket = self.budget_store.authorize(
             f"tpm:{request.user_id}:{request.metadata.use_case_tag}",
@@ -533,6 +589,8 @@ class GovernanceProxy:
         final_answer = self.redact_sources(raw)
         final_answer, output_findings = self.scrubber.sanitize_output(final_answer)
         raw_model_answer, raw_model_output_findings = self.scrubber.sanitize_output(raw)
+        output_domain = self.classify_domain(raw)
+        domain = output_domain if output_domain["category"] in {"ethical", "social"} else input_domain
         risk_score = self.score_risk(
             request=request,
             requested_tokens=requested_tokens,
@@ -543,9 +601,10 @@ class GovernanceProxy:
             provider_events=provider_events,
             raw=raw,
             fallback_used=fallback_used,
+            domain=domain,
         )
         judge_decision = self.should_invoke_judge(risk_score, policy, bucket, request)
-        judge_result = self.judge(raw, request) if judge_decision["invoke"] else None
+        judge_result = self.judge(raw, request, judge_decision.get("judge_focus")) if judge_decision["invoke"] else None
         outcome = self.decide_outcome(risk_score, judge_result, output_findings)
         decision = outcome["decision"]
         if decision == "block":
@@ -559,6 +618,11 @@ class GovernanceProxy:
             "control": {"route": route["route"], "policy": policy["label"], "bucket": bucket},
             "gate": {"session_tool_calls": session.tool_calls, "circuit_open": session.circuit_open},
             "verify": {
+                "domain_classification": {
+                    "input": input_domain,
+                    "output": output_domain,
+                    "selected": domain,
+                },
                 "sources": sources,
                 "source_verification": source_verification,
                 "fallback_used": fallback_used,

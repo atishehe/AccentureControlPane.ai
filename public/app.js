@@ -141,8 +141,10 @@ function renderPipeline(result) {
     : "No sensitive data detected";
   const risk = result.layers.verify.risk_score;
   const judge = result.layers.verify.judge_invocation;
+  const domain = result.layers.verify.domain_classification?.selected?.category;
+  const judgeFocus = judge?.judge_focus ? `; ${judge.judge_focus.replace(/_/g, " ")}` : "";
   const verifyText = risk
-    ? `Risk ${risk.overall_risk}; Judge ${judge?.invoke ? "invoked" : "skipped"}`
+    ? `Risk ${risk.overall_risk}; ${domain || "general"}; Judge ${judge?.invoke ? "invoked" : "skipped"}${judgeFocus}`
     : result.layers.verify.fallback_used ? "Fallback recovered evidence" : "Sources matched registry";
 
   pipeline.innerHTML = [
@@ -199,13 +201,19 @@ function renderExplainer(result) {
   // Phase 3: Verification & Risk
   const risk = result.layers?.verify?.risk_score;
   const judge = result.layers?.verify?.judge_invocation;
+  const judgeResult = result.layers?.verify?.judge;
+  const domain = result.layers?.verify?.domain_classification?.selected;
   const fallbackUsed = result.layers?.verify?.fallback_used;
   if (risk) {
     const judgeTag = judge?.invoke 
-      ? `<span class="tag-badge ${judge.passed ? "ok" : "danger"}">Judge Invoked</span>` 
+      ? `<span class="tag-badge ${judgeResult?.passed ? "ok" : "danger"}">Judge Invoked</span>` 
       : `<span class="tag-badge ok">Judge Skipped</span>`;
     const fallbackTag = fallbackUsed ? `<span class="tag-badge warn">Fallback Cited</span>` : ``;
-    riskBox.innerHTML = `${judgeTag} ${fallbackTag} Perf: ${risk.performance_risk} | Cost: ${risk.cost_risk} | Resp: ${risk.responsibility_risk}`;
+    const domainTag = domain?.category
+      ? `<span class="tag-badge info">${domain.category}</span>`
+      : ``;
+    const focusText = judge?.judge_focus ? ` | Focus: ${judge.judge_focus.replace(/_/g, " ")}` : "";
+    riskBox.innerHTML = `${judgeTag} ${fallbackTag} ${domainTag} Perf: ${risk.performance_risk} | Cost: ${risk.cost_risk} | Resp: ${risk.responsibility_risk}${focusText}`;
   } else {
     riskBox.innerHTML = `<span class="tag-badge ok">VERIFIED</span> Sources checked against trusted registry.`;
   }
@@ -303,6 +311,11 @@ function renderTraceDetail(result) {
   // 5. Multi-Factor Risk & AI Judge
   const risk = result.layers?.verify?.risk_score;
   const judge = result.layers?.verify?.judge_invocation;
+  const judgeResult = result.layers?.verify?.judge;
+  const domain = result.layers?.verify?.domain_classification?.selected;
+  const domainSummary = domain
+    ? `<p style="margin-top:8px;"><strong>Domain Classifier:</strong> Tagged as <code>${domain.category}</code> with confidence ${domain.confidence}. ${domain.category === "ethical" || domain.category === "social" ? "Responsibility risk baseline raised and fairness review prioritized." : "Standard risk baseline applied."}</p>`
+    : "";
 
   let riskHtml = "";
   if (risk) {
@@ -318,7 +331,10 @@ function renderTraceDetail(result) {
 
   let judgeHtml = "";
   if (judge?.invoke) {
-    judgeHtml = `<p style="margin-top:6px;"><strong>AI-as-a-Judge Invoked:</strong> ${judge.passed ? "Passed" : "Failed"}. Critique: <em>${judge.critique || judge.reason || "Review complete"}</em></p>`;
+    const fairnessChecks = judgeResult?.fairness_checks?.length
+      ? `<br><strong>Fairness Checks:</strong> ${judgeResult.fairness_checks.join("; ")}`
+      : "";
+    judgeHtml = `<p style="margin-top:6px;"><strong>AI-as-a-Judge Invoked:</strong> ${judgeResult?.passed ? "Passed" : "Failed"}. Focus: <code>${judge.judge_focus || "grounding_and_safety"}</code>. Critique: <em>${judgeResult?.critique || judge.reason || "Review complete"}</em>${fairnessChecks}</p>`;
   } else {
     judgeHtml = `<p style="margin-top:6px; color:var(--text-secondary);"><strong>AI-as-a-Judge:</strong> Skipped (risk profile within standard threshold; conserved budget).</p>`;
   }
@@ -373,6 +389,7 @@ function renderTraceDetail(result) {
       </div>
       <div class="trace-section-body">
         ${riskHtml}
+        ${domainSummary}
         ${judgeHtml}
       </div>
     </div>
