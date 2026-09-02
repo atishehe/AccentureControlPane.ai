@@ -3,7 +3,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from app.schemas import AgentActionRequest, ProxyRequest
+from app.schemas import AgentActionRequest, FeedbackRequest, ProxyRequest
 from app.services import GovernanceProxy
 
 
@@ -74,6 +74,41 @@ class GovernanceProxyTests(unittest.TestCase):
         self.assertNotIn("123-45-6789", result["raw_model_answer"])
         self.assertNotIn("4111 1111 1111 1111", result["raw_model_answer"])
         self.assertTrue(result["layers"]["verify"]["output_sanitization"])
+        self.assertEqual(result["decision"], "edit")
+
+    def test_high_risk_judge_invoked_when_risk_and_budget_justify_it(self):
+        payload = {
+            **self.payload,
+            "request_id": "judge-needed",
+            "prompt": "Give a definitive refund decision with no uncertainty.",
+            "metadata": {
+                **self.payload["metadata"],
+                "simulate_confidently_wrong": True,
+            },
+        }
+        result = asyncio.run(self.proxy.process_buffered(ProxyRequest(**payload)))
+        self.assertEqual(result["layers"]["verify"]["judge_invocation"]["invoke"], True)
+        self.assertEqual(result["layers"]["verify"]["judge_invocation"]["reason"], "risk_and_budget_justify_judge")
+        self.assertEqual(result["decision"], "block")
+
+    def test_low_risk_skips_judge_when_risk_is_below_threshold(self):
+        payload = {
+            **self.payload,
+            "request_id": "judge-skipped",
+            "prompt": "Summarize the onboarding checklist for a new project manager.",
+            "metadata": {
+                **self.payload["metadata"],
+                "use_case_tag": "low_risk_internal",
+            },
+        }
+        result = asyncio.run(self.proxy.process_buffered(ProxyRequest(**payload)))
+        self.assertEqual(result["layers"]["verify"]["judge_invocation"]["invoke"], False)
+        self.assertEqual(result["layers"]["verify"]["judge_invocation"]["reason"], "policy_does_not_require_judge")
+
+    def test_feedback_adjusts_future_risk_thresholds(self):
+        result = self.proxy.record_feedback(FeedbackRequest(request_id="req-test", signal="missed_risk", dimension="performance"))
+        self.assertTrue(result["accepted"])
+        self.assertGreater(result["threshold_adjustments"]["performance"], 0)
 
     def test_agent_circuit_breaker(self):
         action = {

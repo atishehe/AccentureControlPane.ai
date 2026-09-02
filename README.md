@@ -4,12 +4,14 @@ ControlPlane.ai is an AI Governance Middleware Proxy for Track 1. It sits betwee
 
 The model should not be the only thing making decisions. The proxy checks the request before it reaches the model, watches the model while it streams, verifies the answer before it is shown, and logs enough context for a governance team to explain what happened.
 
+> [!IMPORTANT]
+> **Prerequisites Check:** Before running, please ensure you have checked the [Prerequisites & Setup Instructions](#8-execution-instructions) (Python 3.10–3.12 and dependencies installed via `pip install -r requirements.txt`).
+
 ## 1. Demo First: How to run
 
 Run the app:
 
 ```bash
-cd C:\ADrive\Accenture
 .venv\Scripts\python.exe run.py
 ```
 
@@ -21,60 +23,51 @@ http://127.0.0.1:8000
 
 Then use these demo actions on the page:
 
-1. Select `PII Shield + High-Risk Verify` and click `Run Proxy`.
-2. Select `Semantic Cache Cost Save` and click `Run Proxy` twice.
-3. Select `Citation Recovery Branch` and click `Stream SSE`.
-4. Select `Provider Rate-Limit Failover` and click `Stream SSE`.
-5. Click `Simulate Agent Action`.
-6. Select `Fail-Closed Schema Drop` and click `Run Proxy`.
+1. Select `PII Shield + High-Risk Verify` and click `Run`.
+2. Select `Semantic Cache Cost Save` and click `Run` twice.
+3. Select `Citation Recovery Branch` and click `Stream`.
+4. Select `Provider Rate-Limit Failover` and click `Stream`.
+5. Click `Simulate Action`.
+6. Select `Fail-Closed Schema Drop` and click `Run`.
+7. Select `Confidently Wrong Detector` and click `Run`.
+8. Select `Bias Risk Detector` and click `Run`.
+9. Select `The Perfect Storm (Multi-Risk)` and click `Run` or `Stream`.
 
-## The Output
+## 2. The Output
 
-When the checker runs the demo, the UI shows four kinds of output.
+When the evaluator runs the demo, the interface presents five distinct observational surfaces:
 
-### Decision Trace
+### Inspection Pipeline Flow
 
-This is the most important panel. It shows the internal governance path.
+This shows the four-stage inline governance progression:
 
-- `Prevent` tells you whether the input was valid and whether private data was masked.
-- `Gate` tells you whether the agent tool call was allowed and whether the circuit breaker is open.
-- `Verify` tells you whether the answer had valid sources, whether fallback recovery was needed, and whether the judge passed.
-- `Control` tells you the routing decision and whether the semantic cache or budget store was used.
+- `Prevent`: Confirms schema validity and PII masking results.
+- `Gate`: Displays session tool invocations and circuit breaker status.
+- `Verify`: Reports source grounding match, async recovery, and judge status.
+- `Control`: Shows model routing, token budgeting, and semantic cache status.
 
-### Streaming Output
+### Sanitized User-Facing Output
 
-This shows the user-facing answer as it is emitted token by token.
+Displays the sanitized response emitted token-by-token (via SSE) or buffered. Internal `<source>` tags and sensitive personal entities are scrubbed before reaching this container.
 
-If the provider rate-limits, the stream continues from the fallback path instead of crashing.
+### Trace Telemetry JSON (Top Vertical Basin)
 
-### Result JSON
+The raw structured JSON telemetry emitted by the proxy engine, containing exact timestamps, layer metrics, session states, and sanitized prompt envelopes. One-click copyable.
 
-This is the raw structured response from the proxy.
+### Execution Analysis & Decision Breakdown (Bottom Vertical Basin)
 
-It includes:
+An executive-level operational breakdown explaining the output in plain, structured engineering language:
 
-- `accepted`
-- `decision`
-- `scrubbed_prompt`
-- `raw_model_answer`
-- `final_answer`
-- `layers`
-- `session`
-- `telemetry`
+- `Policy Verdict & Reason`: Explains why `ALLOW`, `EDIT`, or `BLOCK` was issued.
+- `Data Privacy & DLP`: Reports specific PII entities intercepted and redacted.
+- `Routing & Resiliency`: Documents route selection, cache hits, or mid-stream 429 provider failover.
+- `Source Grounding`: Verifies document IDs cited against the enterprise registry.
+- `Risk & Safety Profile`: Displays numeric tri-risk scores (`overall_risk`, `performance_risk`, `cost_risk`, `responsibility_risk`) and secondary AI Judge critique.
 
-The important thing to notice is that `raw_model_answer` may contain internal `<source>...</source>` tags, but `final_answer` does not.
+### Audit Log & Lifecycle Explainer
 
-### Audit Trail
-
-The dashboard at the bottom records each governance event.
-
-It helps explain:
-
-- what route was chosen
-- whether a fallback was used
-- whether the request was blocked
-- whether the cache hit
-- whether a circuit breaker opened
+- **Audit Ledger**: A live compliance trail recording each transaction, timestamp, decision, and route.
+- **Execution Lifecycle**: Four architectural cards detailing input defense, generation control, verification scoring, and final policy sanitization.
 
 ## 3. What Each Demo Proves
 
@@ -140,145 +133,210 @@ Expected output:
 - the proxy returns `decision: drop`
 - no model call is made
 
+### `Confidently Wrong Detector`
+
+This shows the performance-risk detector.
+
+Expected output:
+
+- the response contains overconfident language in the simulated model path
+- `performance_risk` increases
+- `judge_invocation.invoke` becomes `true`
+- the final decision becomes `block`
+
+### `Bias Risk Detector`
+
+This shows responsibility-risk detection.
+
+Expected output:
+
+- protected-attribute language is detected
+- `responsibility_risk` increases
+- the judge branch is invoked because risk and budget justify it
+- the final decision becomes `block`
+
+### `The Perfect Storm (Multi-Risk)`
+
+This demonstrates the proxy's capability to orchestrate concurrent, multi-vector enterprise governance failures in a single transaction.
+
+Expected output:
+
+- Inbound SSN is masked in `scrubbed_prompt` (`Prevent` layer)
+- Primary model stream encounters an HTTP 429 rate limit and fails over mid-stream to `claude-3-haiku` (`Control` layer)
+- Omission of source tags triggers asynchronous evidence retrieval fallback (`Verify` layer)
+- Overconfident phrasing and protected demographic terms drive up `performance_risk` and `responsibility_risk`
+- Secondary AI Judge is dynamically invoked to review the assertion
+- Final response is safely intercepted and blocked or edited according to unified policy
+
 ## 4. Solution Architecture
 
-The architecture is built from four layers.
+ControlPlane.ai sits between client applications and foundation model runtimes as an **inline governance middleware proxy**. Rather than trusting the foundation model to self-police via system prompts, the proxy enforces deterministic policy verification across four decoupled layers:
 
-### Prevent
+```
+                  ┌─────────────────────────────────────────────────────────┐
+                  │                 INCOMING CLIENT REQUEST                 │
+                  └────────────────────────────┬────────────────────────────┘
+                                               │
+                                               ▼
+         ┌──────────────────────────────────────────────────────────────────────────┐
+         │ 1. PREVENT LAYER (Inbound Gateway Defense)                              │
+         │  • Strict Pydantic Schema Validation (Drop malformed payloads fail-close) │
+         │  • Presidio DLP & Regex Masking (Scrub SSNs, CCs, PII to safe tokens)   │
+         └─────────────────────────────────────┬────────────────────────────────────┘
+                                               │
+                                               ▼
+         ┌──────────────────────────────────────────────────────────────────────────┐
+         │ 2. GATE LAYER (Autonomous Agent Firewall)                               │
+         │  • Session Tool Tracking & Authorization Checks                          │
+         │  • Exponential Failure Tracker & Automatic Circuit Breaker Trips         │
+         └─────────────────────────────────────┬────────────────────────────────────┘
+                                               │
+                                               ▼
+         ┌──────────────────────────────────────────────────────────────────────────┐
+         │ 3. CONTROL LAYER (Economics, Routing & Failover)                         │
+         │  • Semantic Embedding Cache Lookup (0ms latency, 0 tokens on hit)        │
+         │  • Dynamic Provider Routing & Mid-Stream 429 Failover (Primary -> Claude)│
+         │  • Session Token Bucket Allocation & Rate Throttling                     │
+         └─────────────────────────────────────┬────────────────────────────────────┘
+                                               │
+                                               ▼
+                                   [ FOUNDATION MODEL RUNTIME ]
+                                               │
+                                               ▼
+         ┌──────────────────────────────────────────────────────────────────────────┐
+         │ 4. VERIFY & SANITIZE LAYER (Post-Generation Audit)                       │
+         │  • Registry Grounding Audit (Matches <source> tags vs known documents)   │
+         │  • Asynchronous Grounding Fallback Search (Recovers missing evidence)   │
+         │  • Tri-Factor Risk Scoring (Performance, Cost, Responsibility / Bias)    │
+         │  • Adaptive AI-as-a-Judge Escalation (Invoked only when risk justifies)  │
+         │  • Final Outbound Sanitization (Strips internal tags & masks leaks)      │
+         └─────────────────────────────────────┬────────────────────────────────────┘
+                                               │
+                                               ▼
+                  ┌─────────────────────────────────────────────────────────┐
+                  │       SANITIZED USER ANSWER + AUDIT TELEMETRY           │
+                  └─────────────────────────────────────────────────────────┘
+```
 
-This layer validates and sanitizes incoming requests.
+### Layer Breakdown
 
-It uses:
+1. **Prevent (Inbound Screening):**
+   * Pydantic enforces strict contract validation, dropping malformed payloads with HTTP 422 before token consumption.
+   * Microsoft Presidio Analyzer and regex redactors detect structured sensitive entities (SSNs, credit card numbers, confidential IDs) and mask them in-flight before the model sees them.
 
-- Pydantic for strict schema checks
-- Presidio when available for PII detection
-- regex fallback for deterministic masking
+2. **Gate (Agent Execution Guard):**
+   * Monitors autonomous tool calls and agent loops.
+   * Enforces tool-level authorization policies and tracks consecutive failure frequencies.
+   * Trips an automatic circuit breaker when repeated failures occur, halting runaway loops and preventing budget exhaustion.
 
-### Gate
+3. **Control (Routing & Economics):**
+   * Inspects semantic cache embeddings (cosine similarity >= 0.90) to serve repeat queries instantly at zero cost.
+   * Employs LiteLLM-compatible abstraction for intelligent model dispatch (`gpt-4o-mini` primary).
+   * Intercepts upstream HTTP 429 rate limit exceptions mid-SSE stream and routes failover to secondary providers (`claude-3-haiku`) without dropping the client connection.
 
-This layer protects autonomous agent execution.
+4. **Verify & Sanitize (Grounding & Safety Audit):**
+   * Verifies hidden `<source>...</source>` citations against an authoritative document store (`SOURCE_REGISTRY`).
+   * Triggers an asynchronous fallback search if the model hallucinates or omits citations.
+   * Calculates a composite tri-risk score across Performance, Cost, and Responsibility.
+   * Strips all internal source tags and leaked tokens before returning the final response to the user.
 
-It uses:
+## 5. Risk Scoring And Decisions
 
-- tool authorization rules
-- repeated-failure tracking
-- circuit breaker logic
+The proxy computes a normalized tri-factor composite risk score:
 
-### Verify
+* **`performance_risk`**: Measures hallucination likelihood, lack of registry-backed source citations, and overconfident asserting language.
+* **`cost_risk`**: Tracks token budget depletion, upstream provider failover occurrences, and high token utilization.
+* **`responsibility_risk`**: Flags demographic bias, protected personal attributes, and sensitive entity context.
 
-This layer checks the model output before it reaches the user.
+Based on the composite risk matrix, the proxy enforces an explicit policy decision:
+* **`ALLOW`**: Response passed all safety checks and citations; within normal risk tolerances.
+* **`EDIT`**: Response contained sensitive entities or internal source metadata; sanitized before user delivery.
+* **`BLOCK`**: Response exceeded allowable composite risk or was rejected by secondary AI Judge review.
 
-It uses:
+### Adaptive AI-as-a-Judge Escalation (Economics of AI)
 
-- hidden source-tag instructions
-- source parsing with regex
-- source registry validation
-- fallback evidence recovery
-- judge review for high-risk cases
-- final redaction of internal tags
+Calling a secondary LLM-as-a-Judge on every request is economically unviable and adds unacceptable latency. ControlPlane.ai uses an **adaptive escalation pattern**:
+1. Run fast, deterministic heuristic scoring first.
+2. If risk exceeds the use-case threshold AND the session has sufficient token and latency budget, invoke the Judge.
+3. If risk is low or budget is constrained, skip the Judge and resolve via deterministic policy.
 
-### Control
+## 6. Implementation Approach
 
-This layer manages economics and routing.
+ControlPlane.ai is engineered with a strict **separation of concerns** between protocol ingestion, security middleware, and evaluation visualization:
 
-It uses:
+* **Modular Decoupling**: The governance proxy (`app/services.py`) is completely independent of FastAPI web endpoints (`app/main.py`) and browser presentation code (`public/`). The core engine can be embedded as an ASGI middleware, a sidecar proxy, or a standalone API gateway.
+* **Zero-Cold-Start In-Memory Architecture**: Designed to run immediately without requiring third-party cloud credentials. Presidio, semantic embeddings, and source registries fall back gracefully to local deterministic mocks if external enterprise infrastructure (Dragonfly, Redis, Qdrant) is absent.
+* **Real-Time SSE Streaming Interception**: Rather than buffering entire responses before auditing, the proxy processes Server-Sent Events (SSE) token-by-token. If an upstream provider rate limits mid-stream, the proxy intercepts the event and continues the stream from a backup provider seamlessly.
+* **Closed-Loop Feedback Sensitivity**: Exposes `/api/feedback` to dynamically adjust future risk thresholds. Feedback is incorporated into runtime multipliers to prevent alert fatigue while tightening enforcement on recurring violations.
 
-- use-case routing
-- token bucket budgeting
-- semantic caching
-- audit logging
-- latency and cost telemetry
+## 7. Dependencies
 
-## 5. Implementation Approach
+| Package | Version | Purpose & Rationale | Fallback / Resilience |
+| :--- | :---: | :--- | :--- |
+| **`fastapi`** | `^0.110.0` | High-performance async ASGI web framework for REST & SSE streaming | Core requirement |
+| **`uvicorn`** | `^0.28.0` | Production-grade ASGI server implementation | Core requirement |
+| **`pydantic`** | `^2.6.0` | Strict schema validation and fail-closed data contract enforcement | Core requirement |
+| **`httpx`** | `^0.27.0` | Asynchronous HTTP client for provider communication & mock streams | Core requirement |
+| **`presidio-analyzer`** | `^2.2.35` | Enterprise DLP engine for entity and PII detection | Deterministic regex masking |
+| **`presidio-anonymizer`** | `^2.2.35` | PII anonymization and token replacement | Safe placeholder redaction |
+| **`litellm`** | `^1.30.0` | Multi-provider LLM abstraction layer for dynamic model routing | Simulated deterministic router |
+| **`redis`** | `^5.0.0` | Distributed token bucket and rate limit storage | In-memory atomic token bucket |
 
-The project is organized so the governance engine is separate from the UI and the server wiring.
+## 8. Execution Instructions
 
-### `app/main.py`
+### Prerequisites
+* Python 3.10, 3.11, or 3.12 installed.
 
-Defines the FastAPI app and HTTP endpoints.
+### Option A: Quick Start (Windows)
 
-### `app/schemas.py`
+```powershell
+# 1. Clone repository and enter directory
+cd c:\ADrive\Accenture
 
-Defines the request contracts with Pydantic.
+# 2. Activate existing virtual environment
+.\.venv\Scripts\Activate.ps1
 
-### `app/services.py`
+# 3. Launch the governance proxy
+python run.py
+```
 
-Contains the actual proxy logic:
-
-- request validation support
-- PII scrubbing
-- token budgeting
-- cache lookup
-- streaming simulation
-- source verification
-- judge logic
-- circuit breaker logic
-- audit logging
-
-### `app/sample_data.py`
-
-Provides ready-made scenarios for the demo UI.
-
-### `public/`
-
-Contains the browser interface used to run and inspect the demo.
-
-### `tests/`
-
-Contains checks that prove the proxy behaves the way the demo claims.
-
-## 6. Dependencies
-
-The project uses these Python packages:
-
-- `fastapi`
-- `uvicorn`
-- `pydantic`
-- `httpx`
-- `redis`
-- `litellm`
-- `presidio-analyzer`
-- `presidio-anonymizer`
-
-What they are for:
-
-- FastAPI serves the API and SSE stream
-- Pydantic validates request structure
-- Redis or Dragonfly can store token budgets in a distributed way
-- LiteLLM is the model-routing abstraction point
-- Presidio is the PII detector/redactor
-
-The demo also includes fallbacks so it still works if some enterprise services are not available locally.
-
-## 7. Execution Instructions
-
-### Install from scratch
+### Option B: Clean Install from Scratch (Any Platform)
 
 ```bash
+# 1. Create and activate virtual environment
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# On Windows:
+.venv\Scripts\activate
+# On Linux / macOS:
+source .venv/bin/activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Start the server
+python run.py
 ```
 
-### Run the app
-
-```bash
-cd C:\ADrive\Accenture
-.venv\Scripts\python.exe run.py
-```
-
-Then open:
-
+### Accessing the Interface
+Open your browser to:
 ```text
 http://127.0.0.1:8000
 ```
 
-### Run tests
+### Running the Automated Test Suite
+To verify all 9 governance proxy tests (PII scrubbing, semantic caching, 429 failover, citation recovery, circuit breaker, and risk scoring):
 
 ```bash
-.venv\Scripts\python.exe -m unittest tests\test_governance_proxy.py
+python -m unittest tests/test_governance_proxy.py
+```
+Expected output:
+```text
+Ran 9 tests in ~12s
+OK
 ```
 
-## 8. API Endpoints
+## 9. API Endpoints
 
 `POST /api/intercept`
 
@@ -292,6 +350,10 @@ Streaming request path. Emits token-by-token SSE and then the final trace.
 
 Agent execution firewall. Authorizes or blocks tool calls.
 
+`POST /api/feedback`
+
+Lightweight feedback loop. Records whether a risk was missed or over-flagged and adjusts future risk sensitivity for that dimension.
+
 `GET /api/dashboard`
 
 Governance telemetry for the UI.
@@ -300,7 +362,7 @@ Governance telemetry for the UI.
 
 Returns the demo scenarios shown in the left panel.
 
-## 9. Project Structure
+## 10. Project Structure
 
 - `app/main.py`: FastAPI app and routes
 - `app/schemas.py`: Pydantic models
@@ -312,16 +374,17 @@ Returns the demo scenarios shown in the left panel.
 - `tests/test_governance_proxy.py`: tests
 - `run.py`: entry point
 
-## 10. Production Integration Points
+## 11. Production Integration Points
 
 - Replace `LlmRouter._simulate_model_stream` with `litellm.acompletion(..., stream=True)`.
 - Point `BudgetStore` at Dragonfly or Redis in production.
 - Replace `SemanticCache.embed` with managed embeddings or vector DB search.
 - Replace `SOURCE_REGISTRY` with SharePoint, Confluence, Snowflake, Databricks, or enterprise search.
 - Add NeMo Guardrails or Llama Guard as an async semantic security branch in `GovernanceProxy.judge`.
+- Replace the lightweight feedback threshold adjustment with offline evaluation and calibrated policy tuning.
 - Persist audit logs to SIEM, data lake, or governance dashboard.
 
-## 11. A Simple Mental Model
+## 12. A Simple Mental Model
 
 The browser sends a request, the proxy checks and routes it, the model answers, the verifier checks the answer, and the user only sees the sanitized result plus a full audit trail.
 

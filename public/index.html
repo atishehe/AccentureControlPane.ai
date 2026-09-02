@@ -3,70 +3,227 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ControlPlane.ai Prototype</title>
+    <title>ControlPlane</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
-      <section class="topbar">
-        <div>
-          <p class="eyebrow">Track 1 Enterprise Proxy</p>
-          <h1>ControlPlane.ai</h1>
+      <!-- Topbar Header -->
+      <header class="topbar">
+        <div class="brand-group">
+          <div class="logo-mark">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+              <line x1="6" y1="18" x2="6.01" y2="18"></line>
+            </svg>
+          </div>
+          <div>
+            <h1 class="brand-title">ControlPlane</h1>
+            <p class="brand-subtitle">Proxy &amp; Inspection Gateway</p>
+          </div>
         </div>
-        <div class="status-pill" id="health">FastAPI governance proxy</div>
-      </section>
 
+        <div class="topbar-actions">
+          <div class="status-pill" id="health">
+            <span class="status-indicator"></span>
+            <span>Proxy Active</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Workspace Columns -->
       <section class="workspace">
+        <!-- Col 1: Scenario Selector -->
         <aside class="panel scenario-panel">
-          <h2>Scenario</h2>
+          <div class="panel-header">
+            <h2>Scenarios</h2>
+          </div>
+
           <div id="scenarioList" class="scenario-list"></div>
-          <button id="runButton" class="primary-button">Run Proxy</button>
-          <button id="streamButton" class="secondary-button">Stream SSE</button>
-          <button id="actionButton" class="secondary-button">Simulate Agent Action</button>
+
+          <div class="action-dock">
+            <button id="runButton" class="btn btn-primary">Run</button>
+            <div class="btn-group-row">
+              <button id="streamButton" class="btn btn-secondary">Stream</button>
+              <button id="actionButton" class="btn btn-secondary">Simulate Action</button>
+            </div>
+          </div>
         </aside>
 
+        <!-- Col 2: Request Payload Editor -->
         <section class="panel request-panel">
           <div class="panel-header">
-            <h2>Incoming JSON</h2>
-            <span id="scenarioDescription"></span>
+            <h2>Payload</h2>
+            <button class="action-btn" id="copyPayloadBtn" type="button">Copy</button>
           </div>
-          <textarea id="payloadEditor" spellcheck="false"></textarea>
+
+          <div class="scenario-banner" id="scenarioBanner">
+            <span id="scenarioDescription">Select a scenario on the left.</span>
+          </div>
+
+          <div class="editor-container">
+            <textarea id="payloadEditor" spellcheck="false"></textarea>
+          </div>
         </section>
 
+        <!-- Col 3: Decision Trace & Output -->
         <section class="panel result-panel">
           <div class="panel-header">
-            <h2>Decision Trace</h2>
-            <span id="decisionBadge">Waiting</span>
+            <h2>Trace</h2>
+            <span class="decision-pill" id="decisionBadge">Waiting</span>
           </div>
-          <div class="pipeline" id="pipeline"></div>
-          <div class="stream-output" id="streamOutput">Streaming output will appear here.</div>
-          <pre id="resultBox">{}</pre>
+
+          <!-- Pipeline Stepper -->
+          <div class="pipeline-section">
+            <div class="pipeline" id="pipeline"></div>
+          </div>
+
+          <!-- Model Output Box -->
+          <div class="output-card">
+            <div class="output-card-header">
+              <span>Sanitized Output</span>
+            </div>
+            <div class="stream-output" id="streamOutput">Output will appear here.</div>
+          </div>
+
+          <!-- Result Split: Trace JSON (Left) + Detailed Output Explanation (Right) -->
+          <div class="trace-split-container">
+            <!-- Left: Trace JSON -->
+            <div class="trace-json-box">
+              <div class="trace-header">
+                <span>Trace Telemetry</span>
+                <button class="action-btn" id="copyResultBtn" type="button">Copy</button>
+              </div>
+              <pre id="resultBox">{}</pre>
+            </div>
+
+            <!-- Right: Detailed Output & Execution Breakdown -->
+            <div class="trace-detail-box">
+              <div class="trace-header">
+                <span>Execution Analysis</span>
+                <span class="trace-eval-pill" id="traceEvalPill">Awaiting Run</span>
+              </div>
+              <div class="trace-detail-content" id="traceDetailContent">
+                <div class="trace-empty-state">
+                  Select a scenario and click <strong>Run</strong> or <strong>Stream</strong> to inspect the detailed execution and output analysis.
+                </div>
+              </div>
+            </div>
+          </div>
         </section>
       </section>
 
+      <!-- Architecture & Lifecycle Explainer -->
+      <section class="panel explainer-panel" id="explainerSection">
+        <div class="panel-header">
+          <h2>Execution Flow &amp; Verification Breakdown</h2>
+          <span class="explainer-status" id="explainerStatusPill">Ready</span>
+        </div>
+
+        <div class="explainer-grid">
+          <!-- Phase 1 -->
+          <div class="explainer-card" id="expCard1">
+            <div class="exp-card-header">
+              <span class="exp-step-num">01</span>
+              <span class="exp-phase-name">Input Validation &amp; DLP</span>
+            </div>
+            <p class="exp-desc">Pydantic schema validation and PII detection. Sensitive entities (SSN, cards) are redacted before dispatch.</p>
+            <div class="exp-dynamic-box">
+              <span class="exp-box-title">INPUT STATUS</span>
+              <div class="exp-box-content" id="expPiiFindings">Ready</div>
+            </div>
+          </div>
+
+          <!-- Phase 2 -->
+          <div class="explainer-card" id="expCard2">
+            <div class="exp-card-header">
+              <span class="exp-step-num">02</span>
+              <span class="exp-phase-name">Routing &amp; Resiliency</span>
+            </div>
+            <p class="exp-desc">Semantic cache lookup, token budget allocation, and automatic mid-flight failover on provider rate limits.</p>
+            <div class="exp-dynamic-box">
+              <span class="exp-box-title">ROUTING STATUS</span>
+              <div class="exp-box-content" id="expRoutingStatus">Ready</div>
+            </div>
+          </div>
+
+          <!-- Phase 3 -->
+          <div class="explainer-card" id="expCard3">
+            <div class="exp-card-header">
+              <span class="exp-step-num">03</span>
+              <span class="exp-phase-name">Grounding &amp; Risk Scoring</span>
+            </div>
+            <p class="exp-desc">Verifies citations against document registry. Evaluates performance, cost, and responsibility risk scores.</p>
+            <div class="exp-dynamic-box">
+              <span class="exp-box-title">EVALUATION STATUS</span>
+              <div class="exp-box-content" id="expRiskScores">Ready</div>
+            </div>
+          </div>
+
+          <!-- Phase 4 -->
+          <div class="explainer-card" id="expCard4">
+            <div class="exp-card-header">
+              <span class="exp-step-num">04</span>
+              <span class="exp-phase-name">Sanitization &amp; Policy</span>
+            </div>
+            <p class="exp-desc">Strips internal source tags, removes leaked sensitive entities, and applies Allow / Edit / Block policy.</p>
+            <div class="exp-dynamic-box">
+              <span class="exp-box-title">DECISION STATUS</span>
+              <div class="exp-box-content" id="expPolicyDecision">Ready</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Dashboard -->
       <section class="dashboard">
-        <div class="metric">
-          <span>Total Events</span>
-          <strong id="totalEvents">0</strong>
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Events</span>
+            <strong class="metric-value" id="totalEvents">0</strong>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Blocked</span>
+            <strong class="metric-value" id="blockedEvents">0</strong>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Edited</span>
+            <strong class="metric-value" id="editedEvents">0</strong>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Fallbacks</span>
+            <strong class="metric-value" id="fallbackEvents">0</strong>
+          </div>
+
+          <div class="metric-card">
+            <span class="metric-label">Cache</span>
+            <strong class="metric-value" id="cacheEntries">0</strong>
+          </div>
         </div>
-        <div class="metric">
-          <span>Blocked / Flagged</span>
-          <strong id="blockedEvents">0</strong>
-        </div>
-        <div class="metric">
-          <span>Fallback Verifications</span>
-          <strong id="fallbackEvents">0</strong>
-        </div>
-        <div class="metric">
-          <span>Semantic Cache</span>
-          <strong id="cacheEntries">0</strong>
-        </div>
-        <div class="audit panel">
-          <h2>Audit Trail</h2>
-          <div id="auditLog"></div>
+
+        <!-- Audit Table -->
+        <div class="audit-panel">
+          <div class="panel-header">
+            <h2>Audit Log</h2>
+          </div>
+          <div class="audit-table-header">
+            <span>Time</span>
+            <span>Decision</span>
+            <span>Route / Reason</span>
+          </div>
+          <div id="auditLog" class="audit-log-body"></div>
         </div>
       </section>
     </main>
+
     <script src="/app.js"></script>
   </body>
 </html>

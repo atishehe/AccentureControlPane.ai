@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from .sample_data import SCENARIOS
-from .schemas import AgentActionRequest, ProxyRequest
+from .schemas import AgentActionRequest, FeedbackRequest, ProxyRequest
 from .services import proxy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +55,11 @@ async def intercept_stream(request: ProxyRequest) -> StreamingResponse:
 @app.post("/api/action")
 async def action(request: AgentActionRequest) -> Dict[str, Any]:
     return proxy.authorize_action(request)
+
+
+@app.post("/api/feedback")
+async def feedback(request: FeedbackRequest) -> Dict[str, Any]:
+    return proxy.record_feedback(request)
 
 
 @app.exception_handler(ValidationError)

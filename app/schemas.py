@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -21,6 +21,8 @@ class RequestMetadata(BaseModel):
     latency_budget_ms: int = Field(..., ge=100, le=30_000)
     simulate_missing_source: bool = False
     simulate_provider_rate_limit: bool = False
+    simulate_bias_risk: bool = False
+    simulate_confidently_wrong: bool = False
 
 
 class ChatMessage(BaseModel):
@@ -60,3 +62,9 @@ class Scenario(BaseModel):
     name: str
     description: str
     payload: Dict[str, Any]
+
+
+class FeedbackRequest(BaseModel):
+    request_id: str
+    signal: Literal["false_positive", "false_negative", "good_catch", "missed_risk"]
+    dimension: Literal["performance", "cost", "responsibility"]
