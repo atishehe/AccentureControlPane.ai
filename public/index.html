@@ -75,7 +75,10 @@
         <section class="panel result-panel">
           <div class="panel-header">
             <h2>Trace</h2>
-            <span class="decision-pill" id="decisionBadge">Waiting</span>
+            <div class="trace-header-actions">
+              <span class="tag-badge domain-tag" id="traceDomainPill">Domain: Pending</span>
+              <span class="decision-pill" id="decisionBadge">Waiting</span>
+            </div>
           </div>
 
           <!-- Pipeline Stepper -->
@@ -87,6 +90,7 @@
           <div class="output-card">
             <div class="output-card-header">
               <span>Sanitized Output</span>
+              <span class="tag-badge info" id="outputNliPill">NLI: Pending</span>
             </div>
             <div class="stream-output" id="streamOutput">Output will appear here.</div>
           </div>
@@ -97,7 +101,10 @@
             <div class="trace-json-box">
               <div class="trace-header">
                 <span>Trace Telemetry</span>
-                <button class="action-btn" id="copyResultBtn" type="button">Copy</button>
+                <div class="trace-header-actions">
+                  <span class="tag-badge domain-tag" id="telemetryDomainPill">Domain: Pending</span>
+                  <button class="action-btn" id="copyResultBtn" type="button">Copy</button>
+                </div>
               </div>
               <pre id="resultBox">{}</pre>
             </div>
@@ -106,7 +113,10 @@
             <div class="trace-detail-box">
               <div class="trace-header">
                 <span>Execution Analysis</span>
-                <span class="trace-eval-pill" id="traceEvalPill">Awaiting Run</span>
+                <div class="trace-header-actions">
+                  <span class="tag-badge domain-tag" id="analysisDomainPill">Domain: Pending</span>
+                  <span class="trace-eval-pill" id="traceEvalPill">Awaiting Run</span>
+                </div>
               </div>
               <div class="trace-detail-content" id="traceDetailContent">
                 <div class="trace-empty-state">
@@ -158,7 +168,7 @@
               <span class="exp-step-num">03</span>
               <span class="exp-phase-name">Grounding &amp; Risk Scoring</span>
             </div>
-            <p class="exp-desc">Verifies citations against document registry. Evaluates performance, cost, and responsibility risk scores.</p>
+            <p class="exp-desc">Verifies citations, tests response claims against source evidence with NLI, and evaluates performance, cost, and responsibility risk.</p>
             <div class="exp-dynamic-box">
               <span class="exp-box-title">EVALUATION STATUS</span>
               <div class="exp-box-content" id="expRiskScores">Ready</div>

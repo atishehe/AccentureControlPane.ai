@@ -12,6 +12,39 @@ const streamOutput = document.querySelector("#streamOutput");
 const copyPayloadBtn = document.querySelector("#copyPayloadBtn");
 const copyResultBtn = document.querySelector("#copyResultBtn");
 
+function setOutputNliPill(nli) {
+  const pill = document.querySelector("#outputNliPill");
+  if (!pill) return;
+  if (!nli) {
+    pill.textContent = "NLI: Pending";
+    pill.className = "tag-badge info";
+    return;
+  }
+  const state = nli.verdict === "entailed" ? "ok" : nli.verdict === "contradicted" ? "danger" : "warn";
+  pill.textContent = `NLI: ${nli.verdict.toUpperCase()} (${nli.score})`;
+  pill.className = `tag-badge ${state}`;
+  pill.title = `Claim-to-evidence check using ${nli.method}: ${nli.reason.replace(/_/g, " ")}`;
+}
+
+function setDomainTags(domain, judgeFocus) {
+  const category = domain?.category;
+  const isFairnessDomain = category === "ethical" || category === "social";
+  const label = category ? `Domain: ${category.toUpperCase()}` : "Domain: Pending";
+  const modifier = isFairnessDomain ? "bias" : "info";
+
+  for (const id of ["traceDomainPill", "telemetryDomainPill", "analysisDomainPill"]) {
+    const pill = document.querySelector(`#${id}`);
+    if (!pill) continue;
+    pill.textContent = label;
+    pill.className = `tag-badge domain-tag ${category ? modifier : ""}`;
+  }
+
+  const analysisPill = document.querySelector("#analysisDomainPill");
+  if (analysisPill && isFairnessDomain && judgeFocus === "inclusiveness_and_fairness") {
+    analysisPill.textContent = `${label} | Fairness Review`;
+  }
+}
+
 function pretty(value) {
   return JSON.stringify(value, null, 2);
 }
@@ -26,6 +59,7 @@ function previewExplainer(scenario) {
   if (statusPill) statusPill.textContent = "Scenario Selected";
 
   const meta = scenario.payload?.metadata || {};
+  setOutputNliPill(null);
   const hasSSN = scenario.payload?.prompt?.includes("123-45-6789") || scenario.payload?.prompt?.includes("SSN");
   const hasCard = scenario.payload?.prompt?.includes("4111");
 
@@ -70,6 +104,10 @@ function previewTraceDetail(scenario) {
   if (!container) return;
 
   if (evalPill) evalPill.textContent = "Preset Loaded";
+  const expectedDomain = scenario.payload?.metadata?.simulate_bias_risk
+    ? { category: "ethical" }
+    : null;
+  setDomainTags(expectedDomain);
 
   container.innerHTML = `
     <div class="trace-detail-section">
@@ -126,6 +164,12 @@ function setDecisionBadge(decision) {
 }
 
 function renderPipeline(result) {
+  const domainResult = result.layers?.verify?.domain_classification?.selected;
+  const selectedJudgeFocus = result.layers?.verify?.judge_invocation?.judge_focus;
+  const nliResult = result.layers?.verify?.nli_verification;
+  setDomainTags(domainResult, selectedJudgeFocus);
+  setOutputNliPill(nliResult);
+
   if (!result.accepted) {
     pipeline.innerHTML = [
       stage("Prevent", "Schema failed; request dropped before model call.", "danger"),
@@ -141,10 +185,11 @@ function renderPipeline(result) {
     : "No sensitive data detected";
   const risk = result.layers.verify.risk_score;
   const judge = result.layers.verify.judge_invocation;
-  const domain = result.layers.verify.domain_classification?.selected?.category;
+  const nli = nliResult;
+  const domain = domainResult?.category;
   const judgeFocus = judge?.judge_focus ? `; ${judge.judge_focus.replace(/_/g, " ")}` : "";
   const verifyText = risk
-    ? `Risk ${risk.overall_risk}; ${domain || "general"}; Judge ${judge?.invoke ? "invoked" : "skipped"}${judgeFocus}`
+    ? `NLI ${nli?.verdict || "pending"}; Risk ${risk.overall_risk}; Domain ${domain || "general"}; Judge ${judge?.invoke ? "invoked" : "skipped"}${judgeFocus}`
     : result.layers.verify.fallback_used ? "Fallback recovered evidence" : "Sources matched registry";
 
   pipeline.innerHTML = [
@@ -202,6 +247,7 @@ function renderExplainer(result) {
   const risk = result.layers?.verify?.risk_score;
   const judge = result.layers?.verify?.judge_invocation;
   const judgeResult = result.layers?.verify?.judge;
+  const nli = result.layers?.verify?.nli_verification;
   const domain = result.layers?.verify?.domain_classification?.selected;
   const fallbackUsed = result.layers?.verify?.fallback_used;
   if (risk) {
@@ -210,10 +256,12 @@ function renderExplainer(result) {
       : `<span class="tag-badge ok">Judge Skipped</span>`;
     const fallbackTag = fallbackUsed ? `<span class="tag-badge warn">Fallback Cited</span>` : ``;
     const domainTag = domain?.category
-      ? `<span class="tag-badge info">${domain.category}</span>`
+      ? `<span class="tag-badge ${domain.category === "ethical" || domain.category === "social" ? "bias" : "info"}">DOMAIN: ${domain.category.toUpperCase()}</span>`
       : ``;
     const focusText = judge?.judge_focus ? ` | Focus: ${judge.judge_focus.replace(/_/g, " ")}` : "";
-    riskBox.innerHTML = `${judgeTag} ${fallbackTag} ${domainTag} Perf: ${risk.performance_risk} | Cost: ${risk.cost_risk} | Resp: ${risk.responsibility_risk}${focusText}`;
+    const nliClass = nli?.verdict === "entailed" ? "ok" : nli?.verdict === "contradicted" ? "danger" : "warn";
+    const nliTag = nli ? `<span class="tag-badge ${nliClass}">NLI: ${nli.verdict.toUpperCase()}</span>` : "";
+    riskBox.innerHTML = `${nliTag} ${judgeTag} ${fallbackTag} ${domainTag} Perf: ${risk.performance_risk} | Cost: ${risk.cost_risk} | Resp: ${risk.responsibility_risk}${focusText}`;
   } else {
     riskBox.innerHTML = `<span class="tag-badge ok">VERIFIED</span> Sources checked against trusted registry.`;
   }
@@ -297,8 +345,9 @@ function renderTraceDetail(result) {
   }
 
   // 4. Grounding & Evidence Verification
-  const extracted = result.layers?.verify?.extracted_sources || [];
+  const extracted = result.layers?.verify?.sources || result.layers?.verify?.extracted_sources || [];
   const fallbackUsed = result.layers?.verify?.fallback_used;
+  const nli = result.layers?.verify?.nli_verification;
   let groundingSummary = "";
   if (extracted.length > 0) {
     groundingSummary = `Citations verified in registry: ${extracted.map(s => `<code>${s}</code>`).join(" ")}.`;
@@ -307,6 +356,10 @@ function renderTraceDetail(result) {
   } else {
     groundingSummary = `Standard enterprise knowledge response audited against safety bounds.`;
   }
+  if (nli) {
+    const nliClass = nli.verdict === "entailed" ? "ok" : nli.verdict === "contradicted" ? "danger" : "warn";
+    groundingSummary += ` <span class="tag-badge ${nliClass}">NLI: ${nli.verdict.toUpperCase()}</span> Claim-to-evidence verdict: <strong>${nli.verdict}</strong> (${nli.score} confidence) using <code>${nli.method}</code>.`;
+  }
 
   // 5. Multi-Factor Risk & AI Judge
   const risk = result.layers?.verify?.risk_score;
@@ -314,7 +367,10 @@ function renderTraceDetail(result) {
   const judgeResult = result.layers?.verify?.judge;
   const domain = result.layers?.verify?.domain_classification?.selected;
   const domainSummary = domain
-    ? `<p style="margin-top:8px;"><strong>Domain Classifier:</strong> Tagged as <code>${domain.category}</code> with confidence ${domain.confidence}. ${domain.category === "ethical" || domain.category === "social" ? "Responsibility risk baseline raised and fairness review prioritized." : "Standard risk baseline applied."}</p>`
+    ? `<p style="margin-top:8px;"><span class="tag-badge ${domain.category === "ethical" || domain.category === "social" ? "bias" : "info"}">DOMAIN: ${domain.category.toUpperCase()}</span> <strong>Domain Classifier:</strong> confidence ${domain.confidence}. ${domain.category === "ethical" || domain.category === "social" ? "Responsibility risk baseline raised and fairness review prioritized." : "Standard risk baseline applied."}</p>`
+    : "";
+  const nliSummary = nli
+    ? `<p style="margin-top:8px;"><strong>NLI Hallucination Check:</strong> <span class="tag-badge ${nli.verdict === "entailed" ? "ok" : nli.verdict === "contradicted" ? "danger" : "warn"}">${nli.verdict.toUpperCase()}</span> ${nli.reason.replace(/_/g, " ")}. Method: <code>${nli.method}</code>; confidence ${nli.score}.</p>`
     : "";
 
   let riskHtml = "";
@@ -386,9 +442,11 @@ function renderTraceDetail(result) {
     <div class="trace-detail-section">
       <div class="trace-section-title">
         <span>Risk &amp; Evaluation Profile</span>
+        ${domain?.category ? `<span class="tag-badge ${domain.category === "ethical" || domain.category === "social" ? "bias" : "info"}">${domain.category.toUpperCase()}</span>` : ""}
       </div>
       <div class="trace-section-body">
         ${riskHtml}
+        ${nliSummary}
         ${domainSummary}
         ${judgeHtml}
       </div>

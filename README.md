@@ -29,7 +29,7 @@ Then use these demo actions on the page:
 4. Select `Provider Rate-Limit Failover` and click `Stream`.
 5. Click `Simulate Action`.
 6. Select `Fail-Closed Schema Drop` and click `Run`.
-7. Select `Confidently Wrong Detector` and click `Run`.
+7. Select `Confidently Wrong Detector` and click `Run` to see the NLI contradiction verdict.
 8. Select `Bias Risk Detector` and click `Run`.
 9. Select `The Perfect Storm (Multi-Risk)` and click `Run` or `Stream`.
 
@@ -43,16 +43,16 @@ This shows the four-stage inline governance progression:
 
 - `Prevent`: Confirms schema validity and PII masking results.
 - `Gate`: Displays session tool invocations and circuit breaker status.
-- `Verify`: Reports source grounding match, async recovery, and judge status.
+- `Verify`: Reports source grounding, NLI claim-to-evidence verdict, async recovery, and Judge status.
 - `Control`: Shows model routing, token budgeting, and semantic cache status.
 
 ### Sanitized User-Facing Output
 
-Displays the sanitized response emitted token-by-token (via SSE) or buffered. Internal `<source>` tags and sensitive personal entities are scrubbed before reaching this container.
+Displays the sanitized response emitted token-by-token (via SSE) or buffered. Internal `<source>` tags and sensitive personal entities are scrubbed before reaching this container. Its header also shows a live NLI badge: `NLI: ENTAILED`, `NLI: CONTRADICTED`, or `NLI: UNKNOWN`, followed by the verification confidence score. Hovering the badge explains which NLI mode produced the result.
 
 ### Trace Telemetry JSON (Top Vertical Basin)
 
-The raw structured JSON telemetry emitted by the proxy engine, containing exact timestamps, layer metrics, session states, and sanitized prompt envelopes. One-click copyable.
+The raw structured JSON telemetry emitted by the proxy engine, including `nli_verification.verdict`, claim assessments, confidence, source evidence, layer metrics, session states, and sanitized prompt envelopes. One-click copyable.
 
 ### Execution Analysis & Decision Breakdown (Bottom Vertical Basin)
 
@@ -61,8 +61,8 @@ An executive-level operational breakdown explaining the output in plain, structu
 - `Policy Verdict & Reason`: Explains why `ALLOW`, `EDIT`, or `BLOCK` was issued.
 - `Data Privacy & DLP`: Reports specific PII entities intercepted and redacted.
 - `Routing & Resiliency`: Documents route selection, cache hits, or mid-stream 429 provider failover.
-- `Source Grounding`: Verifies document IDs cited against the enterprise registry.
-- `Risk & Safety Profile`: Displays numeric tri-risk scores (`overall_risk`, `performance_risk`, `cost_risk`, `responsibility_risk`), the lightweight domain classification, the selected Judge focus, and secondary AI Judge critique.
+- `Source Grounding`: Verifies document IDs cited against the enterprise registry and displays the NLI verdict: `entailed`, `contradicted`, or `unknown`.
+- `Risk & Safety Profile`: Displays numeric tri-risk scores (`overall_risk`, `performance_risk`, `cost_risk`, `responsibility_risk`), NLI method/confidence, the lightweight domain classification, the selected Judge focus, and secondary AI Judge critique.
 
 ### Audit Log & Lifecycle Explainer
 
@@ -140,9 +140,21 @@ This shows the performance-risk detector.
 Expected output:
 
 - the response contains overconfident language in the simulated model path
+- NLI compares the generated claim with `POLICY-REFUND-2026` and returns `contradicted`
+- `nli_contradiction` is added to the performance-risk signals
 - `performance_risk` increases
 - `judge_invocation.invoke` becomes `true`
 - the final decision becomes `block`
+
+### Reading NLI Output
+
+The output header, Verify pipeline stage, Trace Telemetry JSON, Source Grounding analysis, and Risk & Evaluation Profile all report the NLI verdict.
+
+* **`NLI: ENTAILED`**: Each checked response claim is supported by its cited governed document.
+* **`NLI: CONTRADICTED`**: At least one response claim conflicts with its cited document. The proxy adds `nli_contradiction`, increases `performance_risk`, and can invoke the Judge or block the response.
+* **`NLI: UNKNOWN`**: Evidence is insufficient to support one or more claims. The proxy adds `nli_unsupported_claim` and escalates proportionately.
+
+The trace field is `layers.verify.nli_verification`. It includes the active method, verdict, confidence, source-grounded claim assessments, and machine-readable reason.
 
 ### `Bias Risk Detector`
 
@@ -209,6 +221,7 @@ ControlPlane.ai sits between client applications and foundation model runtimes a
          ┌──────────────────────────────────────────────────────────────────────────┐
          │ 4. VERIFY & SANITIZE LAYER (Post-Generation Audit)                       │
          │  • Registry Grounding Audit (Matches <source> tags vs known documents)   │
+         │  • NLI Claim-to-Evidence Check (Entailed / Contradicted / Unknown)      │
          │  • Asynchronous Grounding Fallback Search (Recovers missing evidence)   │
          │  • Lightweight Domain Classification (Ethical, Social, Technical, General)│
          │  • Tri-Factor Risk Scoring (Performance, Cost, Responsibility / Bias)    │
@@ -240,6 +253,7 @@ ControlPlane.ai sits between client applications and foundation model runtimes a
 
 4. **Verify & Sanitize (Grounding & Safety Audit):**
    * Verifies hidden `<source>...</source>` citations against an authoritative document store (`SOURCE_REGISTRY`).
+   * Splits the model response into claims and evaluates each claim against cited source evidence with NLI. `contradicted` and `unknown` claims increase `performance_risk` before policy enforcement.
    * Triggers an asynchronous fallback search if the model hallucinates or omits citations.
    * Classifies the request and raw model output into lightweight domains (`ethical`, `social`, `technical`, or `general`) before final policy selection.
    * Calculates a composite tri-risk score across Performance, Cost, and Responsibility.
@@ -249,7 +263,7 @@ ControlPlane.ai sits between client applications and foundation model runtimes a
 
 The proxy computes a normalized tri-factor composite risk score:
 
-* **`performance_risk`**: Measures hallucination likelihood, lack of registry-backed source citations, and overconfident asserting language.
+* **`performance_risk`**: Measures hallucination likelihood, lack of registry-backed source citations, NLI `contradicted`/`unknown` verdicts, and overconfident asserting language.
 * **`cost_risk`**: Tracks token budget depletion, upstream provider failover occurrences, and high token utilization.
 * **`responsibility_risk`**: Flags demographic bias, protected personal attributes, and sensitive entity context.
 
@@ -272,12 +286,23 @@ Calling a secondary LLM-as-a-Judge on every request is economically unviable and
 3. If the selected domain is `ethical` or `social`, prompt the Judge specifically for inclusiveness, fairness, protected-attribute treatment, and equal-access concerns.
 4. If risk is low or budget is constrained, skip the Judge and resolve via deterministic policy.
 
+### NLI Hallucination Verification
+
+After source IDs pass registry validation, the Verify layer turns the response into factual claims and compares them with the text of the cited governed documents. Every claim receives one of three labels:
+
+* **`entailed`**: The evidence supports the claim.
+* **`contradicted`**: The evidence conflicts with the claim. This adds `nli_contradiction` and sharply raises `performance_risk`.
+* **`unknown`**: The evidence does not support the claim strongly enough. This adds `nli_unsupported_claim` and triggers proportionate risk escalation.
+
+By default the prototype uses an offline deterministic NLI fallback, keeping the demo fast and independent of model downloads. To activate the local Hugging Face semantic NLI model, install dependencies and launch with `CONTROLPLANE_ENABLE_HF_NLI=true`. The telemetry always reports the active method as either `heuristic_nli_fallback` or `transformers_nli`.
+
 ## 6. Implementation Approach
 
 ControlPlane.ai is engineered with a strict **separation of concerns** between protocol ingestion, security middleware, and evaluation visualization:
 
 * **Modular Decoupling**: The governance proxy (`app/services.py`) is completely independent of FastAPI web endpoints (`app/main.py`) and browser presentation code (`public/`). The core engine can be embedded as an ASGI middleware, a sidecar proxy, or a standalone API gateway.
-* **Zero-Cold-Start In-Memory Architecture**: Designed to run immediately without requiring third-party cloud credentials. Presidio, semantic embeddings, and source registries fall back gracefully to local deterministic mocks if external enterprise infrastructure (Dragonfly, Redis, Qdrant) is absent.
+* **Adaptive NLI Verification**: Claim-to-evidence checks run after citation validation. The demo defaults to an offline fallback; enabling the local DeBERTa MNLI model upgrades this to semantic NLI without changing the proxy contract or UI telemetry.
+* **Zero-Cold-Start In-Memory Architecture**: Designed to run immediately without requiring third-party cloud credentials. Presidio, semantic embeddings, source registries, and NLI checks have local fallbacks if external enterprise infrastructure is absent.
 * **Real-Time SSE Streaming Interception**: Rather than buffering entire responses before auditing, the proxy processes Server-Sent Events (SSE) token-by-token. If an upstream provider rate limits mid-stream, the proxy intercepts the event and continues the stream from a backup provider seamlessly.
 * **Closed-Loop Feedback Sensitivity**: Exposes `/api/feedback` to dynamically adjust future risk thresholds. Feedback is incorporated into runtime multipliers to prevent alert fatigue while tightening enforcement on recurring violations.
 
@@ -293,6 +318,8 @@ ControlPlane.ai is engineered with a strict **separation of concerns** between p
 | **`presidio-anonymizer`** | `^2.2.35` | PII anonymization and token replacement | Safe placeholder redaction |
 | **`litellm`** | `^1.30.0` | Multi-provider LLM abstraction layer for dynamic model routing | Simulated deterministic router |
 | **`redis`** | `^5.0.0` | Distributed token bucket and rate limit storage | In-memory atomic token bucket |
+| **`transformers`** | `4.44.2` | Hugging Face pipeline used by the optional DeBERTa NLI claim-to-evidence verifier | Offline heuristic NLI fallback |
+| **`torch`** | `2.4.1` | Local runtime for the optional Transformer NLI model | NLI fallback remains available |
 
 ## 8. Execution Instructions
 
@@ -307,6 +334,10 @@ cd c:\ADrive\Accenture
 
 # 2. Activate existing virtual environment
 .\.venv\Scripts\Activate.ps1
+
+# Optional: enable the local DeBERTa semantic NLI model.
+# The first run downloads model weights into .hf_cache/.
+$env:CONTROLPLANE_ENABLE_HF_NLI = "true"
 
 # 3. Launch the governance proxy
 python run.py

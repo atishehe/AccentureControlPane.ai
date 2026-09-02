@@ -90,6 +90,9 @@ class GovernanceProxyTests(unittest.TestCase):
         self.assertEqual(result["layers"]["verify"]["judge_invocation"]["invoke"], True)
         self.assertEqual(result["layers"]["verify"]["judge_invocation"]["reason"], "risk_and_budget_justify_judge")
         self.assertEqual(result["decision"], "block")
+        nli = result["layers"]["verify"]["nli_verification"]
+        self.assertEqual(nli["verdict"], "contradicted")
+        self.assertIn("nli_contradiction", result["layers"]["verify"]["risk_score"]["signals"])
 
     def test_bias_domain_classification_routes_to_fairness_judge(self):
         payload = {

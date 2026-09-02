@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import json
 import math
+import os
+from pathlib import Path
 import re
 import time
 from collections import Counter, defaultdict, deque
@@ -12,6 +14,9 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 
 from .schemas import AgentActionRequest, FeedbackRequest, ProxyRequest, UseCaseTag
+
+# Keep optional Hugging Face model files inside the project instead of a user-profile cache.
+os.environ.setdefault("HF_HOME", str(Path(__file__).resolve().parents[1] / ".hf_cache"))
 
 try:
     from presidio_analyzer import AnalyzerEngine
@@ -25,12 +30,17 @@ try:
 except Exception:  # pragma: no cover - optional enterprise dependency
     redis = None
 
+try:
+    from transformers import pipeline as transformers_pipeline
+except Exception:  # pragma: no cover - optional local NLI dependency
+    transformers_pipeline = None
+
 
 SOURCE_REGISTRY = {
-    "POLICY-REFUND-2026": "Customer refund policy, governed document store",
-    "KB-ONBOARDING-19": "Internal onboarding checklist, knowledge base",
-    "POLICY-CREDIT-EU-7": "EU credit decision support policy",
-    "SEC-AI-OPS-4": "AI operations security baseline",
+    "POLICY-REFUND-2026": "Refund eligibility depends on the return window, item condition, and purchase channel. The policy does not approve every request automatically.",
+    "KB-ONBOARDING-19": "The onboarding checklist covers scope, stakeholders, cadence, access, risks, and delivery governance.",
+    "POLICY-CREDIT-EU-7": "Credit decisions require governed evidence and human review before applicant-level action.",
+    "SEC-AI-OPS-4": "Enterprise AI operations require least privilege, audit logging, rate limits, and source-grounded answers. Access decisions must not use gender or other protected attributes.",
 }
 
 
@@ -292,12 +302,90 @@ class LlmRouter:
         return f"The proxy completed governed inference with source verification enabled. Routed through {provider}. <source>SEC-AI-OPS-4</source>"
 
 
+class NliVerifier:
+    """Checks whether response claims are entailed by cited governed evidence."""
+
+    contradiction_pairs = (
+        ("always approve", "does not approve every request"),
+        ("always approves", "does not approve every request"),
+        ("uses gender", "must not use gender"),
+        ("use gender", "must not use gender"),
+    )
+    stop_words = {"the", "a", "an", "and", "or", "with", "for", "to", "of", "in", "on", "is", "was", "are", "through", "routed", "provider"}
+
+    def __init__(self) -> None:
+        self.model_name = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+        self.classifier = None
+        self.mode = "heuristic_nli_fallback"
+        self.load_error: Optional[str] = None
+        # Downloads/model loading are opt-in so the proxy remains fast and offline-capable by default.
+        if os.getenv("CONTROLPLANE_ENABLE_HF_NLI", "false").lower() == "true" and transformers_pipeline:
+            try:
+                self.classifier = transformers_pipeline("text-classification", model=self.model_name)
+                self.mode = "transformers_nli"
+            except Exception as error:
+                self.load_error = type(error).__name__
+
+    def _claims(self, text: str) -> List[str]:
+        clean = re.sub(r"<source>.*?</source>", "", text, flags=re.I | re.S)
+        return [
+            claim.strip()
+            for claim in re.split(r"(?<=[.!?])\s+", clean)
+            if len(claim.strip()) > 12 and not claim.strip().lower().startswith("routed through")
+        ]
+
+    def _heuristic_label(self, claim: str, evidence: str) -> tuple[str, float]:
+        claim_lower, evidence_lower = claim.lower(), evidence.lower()
+        if any(negative in evidence_lower and positive in claim_lower for positive, negative in self.contradiction_pairs):
+            return "contradicted", 0.94
+        claim_terms = set(re.findall(r"[a-z]{4,}", claim_lower)) - self.stop_words
+        evidence_terms = set(re.findall(r"[a-z]{4,}", evidence_lower)) - self.stop_words
+        overlap = len(claim_terms & evidence_terms)
+        if overlap >= 3:
+            return "entailed", min(0.92, 0.55 + overlap * 0.09)
+        return "unknown", 0.62
+
+    def _transformer_label(self, claim: str, evidence: str) -> tuple[str, float]:
+        if not self.classifier:
+            return self._heuristic_label(claim, evidence)
+        result = self.classifier({"text": claim, "text_pair": evidence}, truncation=True)[0]
+        label = result["label"].lower()
+        if "entail" in label:
+            return "entailed", round(float(result["score"]), 2)
+        if "contrad" in label:
+            return "contradicted", round(float(result["score"]), 2)
+        return "unknown", round(float(result["score"]), 2)
+
+    def verify(self, response: str, source_ids: Iterable[str]) -> Dict[str, Any]:
+        evidence = " ".join(SOURCE_REGISTRY[source_id] for source_id in source_ids if source_id in SOURCE_REGISTRY)
+        claims = self._claims(response)
+        if not evidence or not claims:
+            return {"enabled": True, "method": self.mode, "verdict": "unknown", "score": 0.0, "claims": [], "reason": "missing_claim_or_evidence"}
+        assessments = []
+        for claim in claims:
+            label, confidence = self._transformer_label(claim, evidence)
+            assessments.append({"claim": claim, "label": label, "confidence": confidence})
+        labels = [assessment["label"] for assessment in assessments]
+        verdict = "contradicted" if "contradicted" in labels else "unknown" if "unknown" in labels else "entailed"
+        score = min(assessment["confidence"] for assessment in assessments)
+        return {
+            "enabled": True,
+            "method": self.mode,
+            "model": self.model_name if self.mode == "transformers_nli" else None,
+            "verdict": verdict,
+            "score": round(score, 2),
+            "claims": assessments,
+            "reason": "all_claims_entailed" if verdict == "entailed" else "claim_contradicts_evidence" if verdict == "contradicted" else "claim_not_entailed_by_evidence",
+        }
+
+
 class GovernanceProxy:
     def __init__(self) -> None:
         self.scrubber = PiiScrubber()
         self.budget_store = BudgetStore()
         self.semantic_cache = SemanticCache()
         self.llm_router = LlmRouter()
+        self.nli_verifier = NliVerifier()
         self.sessions: Dict[str, SessionState] = {}
         self.audit = AuditLog()
         self.feedback_threshold_adjustments = defaultdict(float)
@@ -315,7 +403,7 @@ class GovernanceProxy:
 
     def inject_instructions(self, prompt: str, request: ProxyRequest, route: Dict[str, Any]) -> str:
         return (
-            "Hidden governance instruction: Answer only with grounded claims. "
+            "Hidden governance instruction: Answer only with claims entailed by the cited source evidence. "
             "Append source IDs inside <source>...</source> tags. "
             "For regulated or high-risk cases, avoid decisive recommendations without review.\n"
             f"Route={route['route']} geography={request.metadata.geography} industry={request.metadata.industry}\n"
@@ -416,6 +504,7 @@ class GovernanceProxy:
         raw: str,
         fallback_used: bool,
         domain: Dict[str, Any],
+        nli_verification: Dict[str, Any],
     ) -> Dict[str, Any]:
         lower = raw.lower()
         performance = 0.08
@@ -441,6 +530,12 @@ class GovernanceProxy:
         if fallback_used:
             performance += 0.18
             signals.append("fallback_verification_used")
+        if nli_verification["verdict"] == "contradicted":
+            performance += 0.55
+            signals.append("nli_contradiction")
+        elif nli_verification["verdict"] == "unknown":
+            performance += 0.28
+            signals.append("nli_unsupported_claim")
         if "definitely correct" in lower or "always approves" in lower or "no exceptions" in lower:
             performance += 0.32
             signals.append("overconfident_claim_language")
@@ -586,6 +681,8 @@ class GovernanceProxy:
             source_verification = self.verify_sources(sources)
             fallback_used = True
 
+        nli_verification = self.nli_verifier.verify(raw, sources)
+
         final_answer = self.redact_sources(raw)
         final_answer, output_findings = self.scrubber.sanitize_output(final_answer)
         raw_model_answer, raw_model_output_findings = self.scrubber.sanitize_output(raw)
@@ -602,6 +699,7 @@ class GovernanceProxy:
             raw=raw,
             fallback_used=fallback_used,
             domain=domain,
+            nli_verification=nli_verification,
         )
         judge_decision = self.should_invoke_judge(risk_score, policy, bucket, request)
         judge_result = self.judge(raw, request, judge_decision.get("judge_focus")) if judge_decision["invoke"] else None
@@ -625,6 +723,7 @@ class GovernanceProxy:
                 },
                 "sources": sources,
                 "source_verification": source_verification,
+                "nli_verification": nli_verification,
                 "fallback_used": fallback_used,
                 "risk_score": risk_score,
                 "judge_invocation": judge_decision,

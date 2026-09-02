@@ -91,7 +91,7 @@ SCENARIOS = [
     {
         "id": "confidently-wrong",
         "name": "Confidently Wrong Detector",
-        "description": "Simulates overconfident unsupported language so the judge is invoked only when risk justifies the cost.",
+        "description": "Simulates a claim contradicted by cited policy evidence, raising NLI performance risk before Judge review.",
         "payload": {
             "request_id": "req-1005",
             "user_id": "risk-nora",
